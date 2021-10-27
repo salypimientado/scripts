@@ -1,0 +1,94 @@
+#!/bin/bash
+# auto-storage: Faster dir and file creation for school subjects
+
+# structure is semester -->Class ---> homework --> hwfolder with hw number --> file with language extension
+#                          |--> class --> files                            |->makefile for language
+#                          |-->README.org/md
+
+# newfile asks semester class hw? lang
+
+# stored in file as semester class lang
+
+file=$HOME/.asdata
+
+#change to md to change to markdown
+readme_extension=org
+
+semesters=$(awk '/SEMESTER/{flag=1;next}/END/{flag=0}flag' $file)
+classes=$(awk '/CLASS/{flag=1;next}/END/{flag=0}flag' $file)
+
+# TODO: need to create semester, then class
+# class needs a semester
+# when class is created readme is created with extension, class and homework dirs created
+
+PS3='Select an action: '
+options=("Create file" "Add class" "Add semester")
+select opt in "${options[@]}"
+do
+    case $opt in
+        "Create file")
+            PS3='Select a semester: '
+            semester_nums=($(echo "$semesters" | awk '{ print $1}' ))
+            select selected_semester in "${semester_nums[@]}"
+            do
+                classes_in_semester=($(echo "$classes" | awk -v var="$selected_semester" '$1 == var {print $2}'))
+                PS3='Select a class: '
+                select selected_class in "${classes_in_semester[@]}"
+                do
+                    dir=$(echo "$semesters" | awk -v var="$selected_semester" '$1 ==var {print $2}')
+                    lang=$(echo "$classes" | awk -v var="$selected_class" '$2 == var {print $3}')
+                    read -r -p "Is this file for homework?: [Y/n] " input
+                    case $input in
+                        [yY][eE][sS]|[yY])
+                            read -r -p "What is this homework's name?: " hw_name
+                            hw_name=${hw_name//" "/"-"}
+                            hw_parent=$dir"/"$selected_class"/hw"
+                            mkdir -p $hw_parent
+                            count=$(ls $hw_parent | wc -l)
+                            formatted_count=$(echo "$count" | awk '{printf "%02d", $1}')
+                            hw_dir=$(printf '%s/%s-%s' "$hw_parent" "$formatted_count" "$hw_name")
+                            mkdir $hw_dir
+
+                            read -r -p "Use default file type for this class($lang)?: [Y/n] " file_type_prompt
+                            case $file_type_prompt in
+                                [yY][eE][sS]|[yY])
+                                    touch $hw_dir"/"$hw_name"."$lang
+                                    break
+                            ;;
+                                [nN][oO]|[nN])
+
+                                    read -r -p "Write a file extension: " file_extension
+                                    touch $hw_dir"/"$hw_name"."$file_extension
+                                    break
+                                    ;;
+                                *)
+                                    break
+                                    ;;
+                            esac
+                            break
+                            ;;
+                        [nN][oO]|[nN])
+                                  echo $dir
+                                  break
+                                  ;;
+                        *)
+                            echo "Invalid input..."
+                            exit 1
+                            ;;
+                    esac
+                    break
+                done
+                break
+            done
+            break
+            ;;
+        "Add class")
+            echo "$classes"
+            break
+            ;;
+        "Add semester")
+            echo "$semesters"
+            break
+            ;;
+    esac
+done
