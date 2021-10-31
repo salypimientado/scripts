@@ -3,7 +3,7 @@
 
 # structure is semester -->Class ---> homework --> hwfolder with hw number --> file with language extension
 #                          |--> class --> files                            |->makefile for language
-#                          |-->README.org/md
+#                          |-->README.org/md                     (file and makefile creation relegated to python script)
 
 # newfile asks semester class hw? lang
 
@@ -14,12 +14,275 @@ file=$HOME/.asdata
 #change to md to change to markdown
 readme_extension=org
 
-semesters=$(awk '/SEMESTER/{flag=1;next}/END/{flag=0}flag' $file)
-classes=$(awk '/CLASS/{flag=1;next}/END/{flag=0}flag' $file)
+editor_command='em'
 
-# TODO: need to create semester, then class
-# class needs a semester
-# when class is created readme is created with extension, class and homework dirs created
+# TODO: 
+# when class is created readme is created with extension, class and homework dirs created (will be done in python)
+
+
+function check_datafile {
+    if ! [[ -f $file ]]; then
+        read -r -p "There is no data file. Create one?: (~/.asdata) [Y/n] " create_file_prompt
+        case $create_file_prompt in
+            [yY][eE][sS]|[yY])
+                echo "SEMESTER
+END
+CLASS
+END
+BASE_DIR" > $file
+                base_dir=$(zenity --file-selection --directory --title="Select the directory where all files will be stored")
+                echo "$base_dir" >> $file
+                echo "END" >> $file
+                exit 0
+                break
+                ;;
+            [nN][oO]|[nN])
+                exit 1
+                ;;
+            *)
+                ;;
+        esac
+    fi
+}
+
+check_datafile
+
+semesters=$(awk '/SEMESTER/{flag=1;next}/END/{flag=0}flag' "$file")
+classes=$(awk '/CLASS/{flag=1;next}/END/{flag=0}flag' "$file")
+base_dir=$(awk '/BASE_DIR/{flag=1;next}/END/{flag=0}flag' "$file")
+
+function check_semester {
+    echo "$semesters" | awk -v semester="$1" '$1 ==semester {rc = 1}; END { exit !rc }'
+    echo $?
+}
+
+function check_class {
+    echo "$classes" | awk -v semester="$1" -v class="$2" '$1 ==semester && $2 == class {rc = 1}; END { exit !rc }'
+    echo $?
+}
+
+function add_semester {
+    read -r -p "Semester to add: (in number) " add_semester_prompt
+    [[ "$add_semester_prompt" =~ ^[0-9]+$ ]] || { echo "Semester must be a number"; exit 1; }
+    [[ $(check_semester $add_semester_prompt) = 0 ]] && { echo "Semester already exists" ; exit 2; }
+    read -r -p "Name of semester directory: " add_semester_dir
+    add_semester_dir=$(echo "$add_semester_dir" | tr " " "-")
+    line="$add_semester_prompt $add_semester_dir"
+    if [[ -d "$base_dir/$add_semester_dir" ]]; then
+        read -r -p "Directory already exists, use anyways?: [Y/n]" use_dir_prompt
+        case $use_dir_prompt in
+            [yY][eE][sS]|[yY])
+                mapfile -t res < <(awk -v semester="$line" '/SEMESTER/{print;print semester;next}1' $file)
+                printf "%s\n" "${res[@]}" > $file
+                exit 0
+                ;;
+            [nN][oO]|[nN])
+                exit 0
+                ;;
+            *)
+                mapfile -t res < <(awk -v semester="$line" '/SEMESTER/{print;print semester;next}1' $file)
+                printf "%s\n" "${res[@]}" > $file
+                exit 0
+                ;;
+        esac
+    fi
+    mkdir "$base_dir/$add_semester_dir" || { exit 1; }
+    mapfile -t res < <(awk -v semester="$line" '/SEMESTER/{print;print semester;next}1' $file)
+    printf "%s\n" "${res[@]}" > $file
+    exit 0
+}
+
+function add_class {
+    if [[ "$semesters" = "" ]]; then
+        read -r -p "There are no semesters yet. Do you want to add one?: [Y/n] " add_semester_prompt
+        case $add_semester_prompt in
+            [yY][eE][sS]|[yY])
+                add_semester
+                ;;
+            [nN][oO]|[nN])
+                exit 0
+                ;;
+            *)
+                add_semester
+                ;;
+            esac
+    fi
+
+
+    if [[ $1 = 0 ]]; then
+        PS3='Select a semester: '
+        mapfile -t semester_nums < <(echo "$semesters" | awk '{ print $1}' )
+        select selected_semester in "${semester_nums[@]}"
+        do
+            read -r -p "Class name: " class_name
+            class_name=$(echo "$class_name" | tr " " "-")
+            [[ $(check_class "$selected_semester" "$class_name") = 0 ]] && { echo "Class already exists" ; exit 2;}
+            read -r -p "Which file type should this class use by default? (leave empty for none): " lang_ending
+            [[ $lang_ending = "" ]] && lang_ending="NONE"
+            line="$selected_semester $class_name $lang_ending"
+
+            dir="$base_dir/"$(echo "$semesters" | awk -v var="$selected_semester" '$1 ==var {print $2}')
+            class_dir="$dir/$class_name"
+            mkdir "$class_dir" || { exit 1; }
+            mkdir "$class_dir/class" || { exit 1; }
+            mkdir "$class_dir/hw" || { exit 1; }
+            touch "$class_dir/README.$readme_extension" || { exit 1; }
+            mapfile -t res < <(awk -v class="$line" '/CLASS/{print;print class;next}1' $file)
+            printf "%s\n" "${res[@]}" > $file
+            break
+        done
+        exit 0
+    fi
+    read -r -p "Class name: " class_name
+    class_name=$(echo "$class_name" | tr " " "-")
+    read -r -p "Which file type should this class use by default? (leave empty for none): " lang_ending
+    [[ $lang_ending = "" ]] && lang_ending="NONE"
+    line="$1 $class_name $lang_ending"
+    dir="$base_dir/"$(echo "$semesters" | awk -v var="$selected_semester" '$1 ==var {print $2}')
+    class_dir="$dir/$class_name"
+    mkdir "$class_dir" || { exit 1; }
+    mkdir "$class_dir/class" || { exit 1; }
+    mkdir "$class_dir/hw" || { exit 1; }
+    touch "$class_dir/README.$readme_extension" || { exit 1; }
+    mapfile -t res < <(awk -v class="$line" '/CLASS/{print;print class;next}1' $file)
+    printf "%s\n" "${res[@]}" > $file
+    exit 0
+}
+
+function create_file {
+    if [[ "$semesters" = "" ]]; then
+        read -r -p "There are no semesters yet. Do you want to add one?: [Y/n] " add_semester_prompt
+        case $add_semester_prompt in
+            [yY][eE][sS]|[yY])
+                add_semester
+                ;;
+            [nN][oO]|[nN])
+                exit 0
+                ;;
+            *)
+                add_semester
+                ;;
+        esac
+    fi
+
+    PS3='Select a semester: '
+    mapfile -t semester_nums < <(echo "$semesters" | awk '{ print $1}' )
+    select selected_semester in "${semester_nums[@]}"
+    do
+        mapfile -t classes_in_semester < <(echo "$classes" | awk -v var="$selected_semester" '$1 == var {print $2}')
+        dir="$base_dir/"$(echo "$semesters" | awk -v var="$selected_semester" '$1 ==var {print $2}')
+        if [[ ${#classes_in_semester[@]} = 0 ]]; then
+            read -r -p "There are no classes in this semester yet. Do you want to add one?: [Y/n] " add_class_prompt
+            case $add_class_prompt in
+                [yY][eE][sS]|[yY])
+                    add_class $selected_semester
+                    ;;
+                [nN][oO]|[nN])
+                    exit 0
+                    ;;
+                *)
+                    add_class $selected_semester
+                    ;;
+            esac
+        fi
+        PS3='Select a class: '
+        select selected_class in "${classes_in_semester[@]}"
+        do
+            lang=$(echo "$classes" | awk -v var="$selected_class" '$2 == var {print $3}')
+            read -r -p "Is this file for homework?: [Y/n] " input
+            case $input in
+                [yY][eE][sS]|[yY])
+                    read -r -p "What is this homework's name?: " hw_name
+                    hw_name=${hw_name//" "/"-"}
+                    hw_parent="$dir/$selected_class/hw"
+                    mkdir -p "$hw_parent" || { exit 1; }
+                    count=$(ls "$hw_parent" | wc -l)
+                    formatted_count=$(echo "$count" | awk '{printf "%02d", $1}')
+                    hw_dir=$(printf '%s/%s-%s' "$hw_parent" "$formatted_count" "$hw_name")
+                    [[ -d "$hw_dir" ]] && { echo "Homework already exists" ; exit 1; }
+                    mkdir "$hw_dir" || { exit 1; }
+
+                    read -r -p "Use default file type for this class($lang)?: [Y/n] " file_type_prompt
+                    case $file_type_prompt in
+                        [yY][eE][sS]|[yY])
+                            touch "$hw_dir/$hw_name.$lang"
+                            $editor_command "$hw_dir/$hw_name.$lang"
+                            ;;
+                        [nN][oO]|[nN])
+
+                            read -r -p "File: $hw_name." file_extension
+                            touch "$hw_dir/$hw_name.$file_extension"
+                            $editor_command "$hw_dir/$hw_name.$file_extension"
+                            ;;
+                        *)
+                            touch "$hw_dir/$hw_name.$lang"
+                            $editor_command "$hw_dir/$hw_name.$lang"
+                            ;;
+                    esac
+                    ;;
+                [nN][oO]|[nN])
+                    read -r -p "What is this activity's name?: " act_name
+                    act_name=$(echo "$add_name" | tr " " "-")
+                    act_parent="$dir/$selected_class/class"
+
+                    mkdir -p $act_parent
+                    compgen -G "$act_parent/$act_name\.*" > /dev/null || compgen -G "$act_parent/$act_name" > /dev/null&& { echo "File already exists" ; exit 1; }
+                    read -r -p "Use default file type for this class($lang)?: [Y/n] " file_type_prompt
+                    case $file_type_prompt in
+                        [yY][eE][sS]|[yY])
+                            touch "$act_parent/$act_name.$lang"
+                            $editor_command "$act_parent/$act_name.$lang" 
+                            ;;
+                        [nN][oO]|[nN])
+
+                            read -r -p "File: $act_name." file_extension
+                            touch "$act_parent/$act_name.$file_extension"
+                            $editor_command "$act_parent/$act_name.$file_extension"
+                            ;;
+                        *)
+                            touch "$hw_dir/$hw_name.$lang"
+                            $editor_command "$hw_dir/$hw_name.$lang"
+                            ;;
+                    esac
+
+                    break
+                    ;;
+                *)
+                    read -r -p "What is this homework's name?: " hw_name
+                    hw_name=${hw_name//" "/"-"}
+                    hw_parent="$dir/$selected_class/hw"
+                    mkdir -p "$hw_parent" || { exit 1; }
+                    count=$(ls "$hw_parent" | wc -l)
+                    formatted_count=$(echo "$count" | awk '{printf "%02d", $1}')
+                    hw_dir=$(printf '%s/%s-%s' "$hw_parent" "$formatted_count" "$hw_name")
+                    [[ -d "$hw_dir" ]] && { echo "Homework already exists" ; exit 1; }
+                    mkdir "$hw_dir" || { exit 1; }
+
+                    read -r -p "Use default file type for this class($lang)?: [Y/n] " file_type_prompt
+                    case $file_type_prompt in
+                        [yY][eE][sS]|[yY])
+                            touch "$hw_dir/$hw_name.$lang"
+                            $editor_command "$hw_dir/$hw_name.$lang"
+                            break
+                            ;;
+                        [nN][oO]|[nN])
+
+                            read -r -p "File: $hw_name." file_extension
+                            touch "$hw_dir/$hw_name.$file_extension"
+                            $editor_command "$hw_dir/$hw_name.$file_extension"
+                            break
+                            ;;
+                        *)
+                            ;;
+                    esac
+                    ;;
+            esac
+            break
+        done
+        break
+    done
+}
+
 
 PS3='Select an action: '
 options=("Create file" "Add class" "Add semester")
@@ -27,67 +290,15 @@ select opt in "${options[@]}"
 do
     case $opt in
         "Create file")
-            PS3='Select a semester: '
-            semester_nums=($(echo "$semesters" | awk '{ print $1}' ))
-            select selected_semester in "${semester_nums[@]}"
-            do
-                classes_in_semester=($(echo "$classes" | awk -v var="$selected_semester" '$1 == var {print $2}'))
-                PS3='Select a class: '
-                select selected_class in "${classes_in_semester[@]}"
-                do
-                    dir=$(echo "$semesters" | awk -v var="$selected_semester" '$1 ==var {print $2}')
-                    lang=$(echo "$classes" | awk -v var="$selected_class" '$2 == var {print $3}')
-                    read -r -p "Is this file for homework?: [Y/n] " input
-                    case $input in
-                        [yY][eE][sS]|[yY])
-                            read -r -p "What is this homework's name?: " hw_name
-                            hw_name=${hw_name//" "/"-"}
-                            hw_parent=$dir"/"$selected_class"/hw"
-                            mkdir -p $hw_parent
-                            count=$(ls $hw_parent | wc -l)
-                            formatted_count=$(echo "$count" | awk '{printf "%02d", $1}')
-                            hw_dir=$(printf '%s/%s-%s' "$hw_parent" "$formatted_count" "$hw_name")
-                            mkdir $hw_dir
-
-                            read -r -p "Use default file type for this class($lang)?: [Y/n] " file_type_prompt
-                            case $file_type_prompt in
-                                [yY][eE][sS]|[yY])
-                                    touch $hw_dir"/"$hw_name"."$lang
-                                    break
-                            ;;
-                                [nN][oO]|[nN])
-
-                                    read -r -p "Write a file extension: " file_extension
-                                    touch $hw_dir"/"$hw_name"."$file_extension
-                                    break
-                                    ;;
-                                *)
-                                    break
-                                    ;;
-                            esac
-                            break
-                            ;;
-                        [nN][oO]|[nN])
-                                  echo $dir
-                                  break
-                                  ;;
-                        *)
-                            echo "Invalid input..."
-                            exit 1
-                            ;;
-                    esac
-                    break
-                done
-                break
-            done
+            create_file
             break
             ;;
         "Add class")
-            echo "$classes"
+            add_class 0
             break
             ;;
         "Add semester")
-            echo "$semesters"
+            add_semester
             break
             ;;
     esac
